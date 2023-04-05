@@ -386,6 +386,8 @@ def generate_curve(
 
 
 def validate_curve(
+    naer_budget,
+    times,
     sea_level_btm_err_interp,
     sea_level_top_err_interp,
     er_pgm_t,
@@ -395,7 +397,14 @@ def validate_curve(
     er_pgm_vol,
 ):
     pgp_na, pgp_er, budget_discrep, times_subset = generate_curve(
-        er_pgm_t, er_lig_t, na_pgm_t, na_lig_t, er_pgm_vol, discrep=True
+        naer_budget,
+        times,
+        er_pgm_t,
+        er_lig_t,
+        na_pgm_t,
+        na_lig_t,
+        er_pgm_vol,
+        discrep=True,
     )
     valid = (sea_level_btm_err_interp(times_subset) < budget_discrep).all() & (
         sea_level_top_err_interp(times_subset) > budget_discrep
