@@ -301,7 +301,12 @@ def time_generator(periods):
 
 
 def filter_da(ice_da, modern_ice_vol):
-    cond = get_history_volume(ice_da.values) >= modern_ice_vol
+    cond = (
+        get_history_volume(
+            ice_da.values, lons=ice_da.lon.values, lats=ice_da.lat.values
+        )
+        >= modern_ice_vol
+    )
     return ice_da[cond]
 
 
