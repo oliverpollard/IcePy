@@ -3,8 +3,159 @@ import xarray as xr
 import rioxarray
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
-from icesea2.functions import calc_grid_area_geo, volume_to_sle
-from icesea2.gridtools import region_mask
+
+OCEAN_AREA = 3.618 * 10**14
+ICE_DENSITY = 916.75
+OCEAN_DENSITY = 1027
+EARTH_RADIUS = 6.371 * 10**6
+
+
+def calc_sphere_cap_proportion(polar_lat):
+    assert np.all(polar_lat >= 0) and np.all(
+        polar_lat <= 180
+    ), "polar latitude must be in range [0,180] degrees"
+    return (1 - np.cos(polar_lat * np.pi / 180)) / 2
+
+
+def calc_lat_midpoints(lats):
+    assert np.all(np.diff(lats) > 0), "latitudes must be monotonically increasing"
+    assert np.all(lats >= -90) and np.all(
+        lats <= 90
+    ), "latitudes must be in range (-90,90) degrees"
+    # assert lats[0] > 0, "areas cell at 0 latitude is undefined"
+    # assert lats[-1] < 180, "areas cell at 180 latitude is undefined"
+    midpoints = np.zeros(len(lats) + 1)
+    midpoints[1:-1] = lats[:-1] + ((lats[1:] - lats[:-1]) / 2)
+    midpoints[0] = -90
+    midpoints[-1] = 90
+
+    return midpoints
+
+
+def calc_lon_midpoints(lons):
+    assert np.all(np.diff(lons) > 0), "longitudes must be monotonically increasing"
+    assert np.all(lons >= -180) and np.all(
+        lons <= 180
+    ), "longitudes must be in range (-180,180) degrees"
+    midpoints = np.zeros(len(lons))
+    midpoints[:-1] = lons[:-1] + ((lons[1:] - lons[:-1]) / 2)
+    midpoints[-1] = (lons[-1] + ((lons[0] - lons[-1] + 360) / 2)) % 360
+    midpoints = np.sort(midpoints)
+
+    return midpoints
+
+
+def calc_grid_area_geo(lons, lats, earth_area=None):
+    """
+    A matrix of the area associated with each thickness datapoint
+    """
+    if earth_area is None:
+        earth_area = 4 * np.pi * EARTH_RADIUS**2
+
+    # calculate coordinate middpoints, since thickness represents value at centre of an area
+    lat_midpoints = calc_lat_midpoints(lats)
+    cap_proportions = calc_sphere_cap_proportion(lat_midpoints - lat_midpoints[0])
+    strip_proportions = cap_proportions[1:] - cap_proportions[:-1]
+
+    lon_midpoints = calc_lon_midpoints(lons)
+
+    lat_proportions = np.zeros(len(lon_midpoints))
+    lat_proportions[:-1] = (lon_midpoints[1:] - lon_midpoints[:-1]) / 360
+    lat_proportions[-1] = (lon_midpoints[0] - (lon_midpoints[-1] - 360)) / 360
+    cell_proportions = np.matmul(
+        strip_proportions.reshape(-1, 1), lat_proportions.reshape(1, -1)
+    )
+
+    np.testing.assert_almost_equal(np.sum(cell_proportions), 1)
+    cell_areas = earth_area * cell_proportions
+
+    return cell_areas
+
+
+def volume_to_sle(volume):
+    sle = (volume * ICE_DENSITY) / (
+        OCEAN_AREA * OCEAN_DENSITY
+    )
+    return sle
+
+
+def sle_to_volume(sle):
+    volume = (
+        sle * OCEAN_AREA * OCEAN_DENSITY / ICE_DENSITY
+    )
+    return volume
+
+def region_mask(dataarray, region):
+    Eurasia = [
+        [-20, 30],
+        [-20, 60],
+        [-10, 60],
+        [-10, 65],
+        [0, 80],
+        [0, 90],
+        [170, 90],
+        [170, 30],
+    ]
+    NorthAmerica = [
+        [-47, 30],
+        [-47, 50],
+        [-60, 70],
+        [-70, 75],
+        [-70, 90],
+        [-170, 90],
+        [-170, 30],
+    ]
+    Greenland = [
+        [-47, 50],
+        [-60, 70],
+        [-70, 75],
+        [-70, 90],
+        [0, 90],
+        [0, 80],
+        [-10, 65],
+        [-10, 60],
+        [-20, 60],
+    ]
+    Antarctica = [[-180, -90], [-180, -60], [180, -60], [180, -90]]
+    Other = [
+        [-180, -60],
+        [-180, 90],
+        [-170, 90],
+        [-170, 30],
+        [-47, 30],
+        [-47, 50],
+        [-20, 60],
+        [-20, 30],
+        [170, 30],
+        [170, 90],
+        [180, 90],
+        [180, -60],
+        [-180, -60],
+    ]
+
+    names = ["Eurasia", "North America", "Greenland", "Antarctica", "Other"]
+    abbrevs = ["Er", "NA", "Gr", "An", "O"]
+
+    mask_generator = regionmask.Regions(
+        [Eurasia, NorthAmerica, Greenland, Antarctica, Other],
+        names=names,
+        abbrevs=abbrevs,
+        name="Ice Sheet Regions",
+    )
+    mask = mask_generator.mask(dataarray)
+
+    if region in names:
+        index = names.index(region)
+    elif region in abbrevs:
+        index = names.index(region)
+    elif isinstance(region, int):
+        index = region
+    else:
+        raise ValueError(f"Invalid region: {region}")
+
+    mask = xr.ones_like(mask).where(mask == index, 0).values
+
+    return mask
 
 
 def single_stretch(x, new_min, new_max):
